@@ -1,0 +1,7 @@
+*.out
+*.pub
+*_key
+client
+.vscode/*
+.vscode/
+c2-env/
