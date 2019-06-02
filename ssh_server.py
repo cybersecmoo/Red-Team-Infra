@@ -7,11 +7,8 @@ class Server(paramiko.ServerInterface):
     def __init__(self):
         self.event = threading.Event()
 
-    def check_channel_request(self, kind, chanid):
-        if kind == "session":
-            return paramiko.OPEN_SUCCEEDED
-        
-        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+    def check_channel_request(self, kind, chanid):        
+        return paramiko.OPEN_SUCCEEDED
     
     def check_auth_password(self, username, password):
         if (username == "user") and (password == "foo"):
@@ -42,6 +39,21 @@ class Server(paramiko.ServerInterface):
     def check_channel_shell_request(self, channel):
         self.event.set()
         return True
+
+    def check_channel_forward_agent_request(self, channel):
+        return True
+
+    def check_channel_direct_tcpip_request(self, channelID, origin, dest):
+        """ TODO More robust checking; the final system will set up a list of requested reverse tunnels, and check if this matches any of the ones we wanted
+        """
+        print("Forwarding request received")
+        response = paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
+        if origin[0] == "localhost" or origin[0] == "127.0.0.1":
+            print("TCP/IP Forwarding request accepted")
+            response = paramiko.OPEN_SUCCEEDED
+
+        return response
     
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
         return True
@@ -91,15 +103,16 @@ while run:
         if chan is None:
             print("*** No Channel ***")
 
-        print("Authenticated!")
+        else:
+            print("Authenticated!")
 
-        server.event.wait(30)
+            server.event.wait(30)
 
-        if not server.event.is_set():
-            print("*** Client did not ask for a shell! ***")
-        
-        chan.send("HI\r\n")
-        chan.close()
+            if not server.event.is_set():
+                print("*** Client did not ask for a shell! ***")
+            
+            chan.send("HI\r\n")
+            chan.close()
     
         trans.close()
     

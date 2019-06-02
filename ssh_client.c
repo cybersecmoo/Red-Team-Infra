@@ -27,7 +27,7 @@ ssh_channel openSSHTunnel(ssh_session sesh, int remotePort, int destPort) {
     ssh_channel tunnelChannel;
     int returnCode;
 
-    returnCode = ssh_channel_listen_forward(sesh, "localhost", remotePort, NULL);
+    returnCode = ssh_channel_listen_forward(sesh, NULL, remotePort, NULL);
 
     if(returnCode != SSH_OK) {
         returnCode = SSH_ERROR;
@@ -58,7 +58,6 @@ int main(int argc, char **argv) {
 
     if(argc > 1) {
         port = atoi(argv[1]);
-        printf("Port set to %d\n", port);
     }
 
     sesh = ssh_new();
@@ -97,7 +96,7 @@ int main(int argc, char **argv) {
 
     printf("Authenticated with the Server\n");
 
-    ssh_channel tunnelChannel = openSSHTunnel(sesh, 9090, 8080);
+    ssh_channel tunnelChannel = openSSHTunnel(sesh, 9090, 2222);
     
     while(1) {
         char buff[256];
