@@ -54,7 +54,10 @@ int main(int argc, char **argv) {
     int returnCode;
     int verbosity = SSH_LOG_PROTOCOL;
     int port = 22;
-    char *password = "foo";
+
+    // Creds; this user will be chroot jailed and have minimal permissions on the SSH server
+    const char *username = "ssh_user";
+    const char *password = "yourPassword";
 
     if(argc > 1) {
         port = atoi(argv[1]);
@@ -68,7 +71,7 @@ int main(int argc, char **argv) {
     }
 
     // TODO: pass in host as argument
-    //setupSSHOptions(sesh, "localhost", &port, &verbosity);
+    // setupSSHOptions(sesh, "localhost", &port, &verbosity);
     ssh_options_set(sesh, SSH_OPTIONS_HOST, "localhost");
     ssh_options_set(sesh, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
     ssh_options_set(sesh, SSH_OPTIONS_PORT, &port);
@@ -85,7 +88,7 @@ int main(int argc, char **argv) {
 
     printf("Authenticated the server\n");
 
-    returnCode = ssh_userauth_password(sesh, NULL, password);
+    returnCode = ssh_userauth_password(sesh, username, password);
 
     if(returnCode != SSH_AUTH_SUCCESS) {
         fprintf(stderr, "*** ERROR: Failed to authenticate with server ***\n");
