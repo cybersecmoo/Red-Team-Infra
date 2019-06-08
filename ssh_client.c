@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
 
     // TODO: pass in host as argument
     // setupSSHOptions(sesh, "localhost", &port, &verbosity);
-    ssh_options_set(sesh, SSH_OPTIONS_HOST, "localhost");
+    ssh_options_set(sesh, SSH_OPTIONS_HOST, "10.0.2.4");
     ssh_options_set(sesh, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
     ssh_options_set(sesh, SSH_OPTIONS_PORT, &port);
 
@@ -99,7 +99,7 @@ int main(int argc, char **argv) {
 
     printf("Authenticated with the Server\n");
 
-    ssh_channel tunnelChannel = openSSHTunnel(sesh, 9090, 2222);
+    ssh_channel tunnelChannel = openSSHTunnel(sesh, 9090, 22);
     
     while(1) {
         char buff[256];
@@ -108,10 +108,6 @@ int main(int argc, char **argv) {
         if(numRead <= 0) {
             continue;
         }
-
-        int numWritten = ssh_channel_write(tunnelChannel, "hihi\n", numRead);
-
-        printf("Sent\n");
     }
 
     if(tunnelChannel) {
