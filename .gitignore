@@ -6,3 +6,4 @@ client
 .vscode/
 c2-env/
 ssh_client
+ssh_server
