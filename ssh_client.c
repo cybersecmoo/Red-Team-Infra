@@ -72,7 +72,7 @@ int main(int argc, char **argv) {
 
     // TODO: pass in host as argument
     // setupSSHOptions(sesh, "localhost", &port, &verbosity);
-    ssh_options_set(sesh, SSH_OPTIONS_HOST, "10.0.2.4");
+    ssh_options_set(sesh, SSH_OPTIONS_HOST, "localhost");
     ssh_options_set(sesh, SSH_OPTIONS_LOG_VERBOSITY, &verbosity);
     ssh_options_set(sesh, SSH_OPTIONS_PORT, &port);
 
