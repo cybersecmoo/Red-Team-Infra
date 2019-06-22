@@ -20,7 +20,7 @@ def tunnel_handler(channel, host, port):
 def establish_reverse_tunnel(forwardToHostPort, forwardFromPort, transport):
     """ Sets up a reverse tunnel, such that traffic on the server's port `forwardFromPort` is forwarded via SSH to `forwardToHostPort`
     """
-    transport.request_port_forward("localhost", forwardFromPort)
+    transport.request_port_forward("", forwardFromPort)
     closeTunnel = False
 
     while closeTunnel is not True:
@@ -43,13 +43,14 @@ def main():
         password = sys.argv[3]
         port = sys.argv[4]
         localSSHDPort = 22
+        remoteForwardPort = 9090
 
         try:
             client = paramiko.SSHClient()
             client.load_system_host_keys()
             client.set_missing_host_key_policy(paramiko.WarningPolicy)
             client.connect(hostname, port, username=username, password=password)
-            establish_reverse_tunnel(("localhost", localSSHDPort), port, client.get_transport())
+            establish_reverse_tunnel(("localhost", localSSHDPort), remoteForwardPort, client.get_transport())
         
         finally:
             client.close()
