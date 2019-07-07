@@ -1,11 +1,70 @@
 
 #include <libssh/libssh.h>
 #include <libssh/server.h>
+#include <libssh/callbacks.h>
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <pty.h>
+#include <poll.h>
 
-static int auth_password(const char *user, const char *password)
+static int copyChannelToFD(ssh_session sesh, ssh_channel chan, void *data, uint32_t len, int isStderr, void *userData) {
+    int fileDesc = *(int *)userData;
+    int size;
+    (void)sesh;
+    (void)chan;
+    (void)isStderr;
+
+    size = write(fileDesc, data, len);
+
+    return size;
+}
+
+static int copyFDToChannel(socket_t fileDesc, int rEvents, void *userData) {
+    ssh_channel chan = (ssh_channel)userData;
+    char buff[2048];
+    int size = 0;
+
+    if(!chan) {
+        close(fileDesc);
+
+        size = -1;
+    }
+
+    else {
+        if(rEvents & POLLIN) {
+            size = read(fileDesc, buff, 2048);
+
+            if(size > 0) {
+                ssh_channel_write(chan, buff, size);
+            }
+        }
+
+        if(rEvents & POLLHUP) {
+            ssh_channel_close(chan);
+            size = -1;
+        }
+    }
+
+    return size;
+}
+
+static void channelClose(ssh_session sesh, ssh_channel chan, void *userData) {
+    int fileDesc = *(int *)userData;
+    (void)sesh;
+    (void)chan;
+
+    close(fileDesc);
+}
+
+struct ssh_channel_callbacks_struct callbacks = {
+    .channel_data_function = copyChannelToFD,
+    .channel_eof_function = channelClose,
+    .channel_close_function = channelClose,
+    .userdata = NULL
+};
+
+static int authPassword(const char *user, const char *password)
 {
     int returnCode = 1;
 
@@ -26,7 +85,38 @@ static int mainLoop(ssh_channel chan)
 {
     ssh_session sesh = ssh_channel_get_session(chan);
     socket_t fileDesc;
-    
+    struct termios *term = NULL;
+    struct winsize *win = NULL;
+    pid_t childPID;
+    ssh_event event;
+    short events;
+
+    childPID = forkpty(&fileDesc, NULL, term, win);
+
+    callbacks.userdata = &fileDesc;
+    ssh_callbacks_init(&callbacks);
+    ssh_set_channel_callbacks(chan, &callbacks);
+
+    events = POLLIN | POLLPRI | POLLERR | POLLHUP | POLLNVAL;
+    event = ssh_event_new();
+
+    if(ssh_event_add_fd(event, fileDesc, events, copyFDToChannel, chan) != SSH_OK) {
+        return -1;
+    }
+
+    if(ssh_event_add_session(event, sesh) != SSH_OK) {
+        return -1;
+    }
+
+    do {
+        ssh_event_dopoll(event, 1000);
+    } while(!ssh_channel_is_closed(chan));
+
+    ssh_event_remove_fd(event, fileDesc);
+    ssh_event_remove_session(event, sesh);
+    ssh_event_free(event);
+
+    return 0;
 }
 
 int main(int argc, char **argv){
@@ -75,7 +165,7 @@ int main(int argc, char **argv){
             case SSH_REQUEST_AUTH:
                 switch(ssh_message_subtype(message)){
                     case SSH_AUTH_METHOD_PASSWORD:
-                        if(auth_password(ssh_message_auth_user(message),
+                        if(authPassword(ssh_message_auth_user(message),
                            ssh_message_auth_password(message))){
                                auth=1;
                                ssh_message_auth_reply_success(message,0);
@@ -179,21 +269,7 @@ int main(int argc, char **argv){
 
     printf("it works!\n");
 
-    do
-    {
-        i = ssh_channel_read(chan,buf, 2048, 0);
-
-        if(i > 0)
-        {
-            ssh_channel_write(chan, buf, i);
-
-            if(write(1, buf, i) < 0)
-            {
-                printf("error writing to buffer\n");
-                return 1;
-            }
-        }
-    } while (i > 0);
+    mainLoop(chan);
 
     ssh_disconnect(session);
     ssh_bind_free(sshbind);
