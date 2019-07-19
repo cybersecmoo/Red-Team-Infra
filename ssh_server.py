@@ -2,14 +2,22 @@ import socket
 import sys
 import paramiko
 import threading
+import traceback
+import subprocess
+import pty
+
+QUIT_CMD = "quit"
 
 class Server(paramiko.ServerInterface):
     def __init__(self):
         self.event = threading.Event()
 
-    def check_channel_request(self, kind, chanid):        
-        return paramiko.OPEN_SUCCEEDED
-    
+    def check_channel_request(self, kind, chanid): 
+        if kind == "session":
+            return paramiko.OPEN_SUCCEEDED
+
+        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
+
     def check_auth_password(self, username, password):
         if (username == "user") and (password == "foo"):
             return paramiko.AUTH_SUCCESSFUL
@@ -38,6 +46,11 @@ class Server(paramiko.ServerInterface):
     
     def check_channel_shell_request(self, channel):
         self.event.set()
+        print("Shell request")
+        return True
+    
+    def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
+        print("PTY request")
         return True
 
     def check_channel_forward_agent_request(self, channel):
@@ -54,9 +67,6 @@ class Server(paramiko.ServerInterface):
             response = paramiko.OPEN_SUCCEEDED
 
         return response
-    
-    def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
-        return True
 
 def setup_sock():
     try:
@@ -83,6 +93,17 @@ def establish_channel():
 
     return chan, trans, server
 
+def run_loop(chan):
+    command = input("Command: ").strip("\n")
+
+    if command != QUIT_CMD:
+        chan.send(command)
+        response = chan.recv(1024)
+        text = response.decode("utf-8")
+        print(text + "\n")
+
+    return command
+
 sock = setup_sock()
 
 run = True
@@ -106,15 +127,23 @@ while run:
         else:
             print("Authenticated!")
 
-            server.event.wait(30)
+            server.event.wait(10)
 
             if not server.event.is_set():
                 print("*** Client did not ask for a shell! ***")
             
-            chan.send("HI\r\n")
+            command = ""
+
+            while command != QUIT_CMD:
+                print("Receiving commands")
+                command = run_loop(chan)
+
             chan.close()
     
         trans.close()
-    
-    except paramiko.SSHException:
+    except KeyboardInterrupt as inter:
+        print("Closing...")
+
+    except paramiko.SSHException as e:
         print("*** SSH negotiation failure ***")
+        traceback.print_exc()
