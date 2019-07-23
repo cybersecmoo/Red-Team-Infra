@@ -5,12 +5,15 @@ import threading
 import traceback
 import subprocess
 import pty
+import os
+import select
 
 QUIT_CMD = "quit"
 
 class Server(paramiko.ServerInterface):
     def __init__(self):
         self.event = threading.Event()
+        self.input = ""
 
     def check_channel_request(self, kind, chanid): 
         if kind == "session":
@@ -27,7 +30,7 @@ class Server(paramiko.ServerInterface):
     def check_auth_publickey(self, username, key):
         key_for_user = paramiko.RSAKey(filename="{0}_key".format(username))
         
-        if (username == "user") and (key == key_for_user):
+        if (key == key_for_user):
             return paramiko.AUTH_SUCCESSFUL
         
         return paramiko.AUTH_FAILED
@@ -46,12 +49,27 @@ class Server(paramiko.ServerInterface):
     
     def check_channel_shell_request(self, channel):
         self.event.set()
-        print("Shell request")
         return True
     
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
-        print("PTY request")
+        (self.pty_pid, self.pty_fd) = pty.fork()
         return True
+
+    def run_pty(self, channel):
+        x = chan.recv(1024).decode("utf-8")
+        chan.send(x)
+
+        if x == "\r":
+            os.write(self.pty_fd, self.input)
+            output = os.read(self.pty_fd, 1024)
+            output = output.stdout.strip("\n")
+            chan.send(output)
+            self.input = ""
+        else:
+            self.input += x
+
+        return x
+
 
     def check_channel_forward_agent_request(self, channel):
         return True
@@ -93,17 +111,6 @@ def establish_channel():
 
     return chan, trans, server
 
-def run_loop(chan):
-    command = input("Command: ").strip("\n")
-
-    if command != QUIT_CMD:
-        chan.send(command)
-        response = chan.recv(1024)
-        text = response.decode("utf-8")
-        print(text + "\n")
-
-    return command
-
 sock = setup_sock()
 
 run = True
@@ -135,8 +142,7 @@ while run:
             command = ""
 
             while command != QUIT_CMD:
-                print("Receiving commands")
-                command = run_loop(chan)
+                command = server.run_pty(chan)
 
             chan.close()
     

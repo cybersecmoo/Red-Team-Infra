@@ -56,7 +56,6 @@ def main():
         username = sys.argv[2]
         password = sys.argv[3]
         port = sys.argv[4]
-        localSSHDPort = 22
         remoteForwardPort = 9090
 
         try:

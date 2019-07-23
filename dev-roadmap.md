@@ -17,5 +17,3 @@
  15. Redo client in Powershell
  16. Experiment with Twitter image-based heartbeating
  17. Run end-to-end
-
-
