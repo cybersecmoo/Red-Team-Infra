@@ -52,23 +52,31 @@ class Server(paramiko.ServerInterface):
         return True
     
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
-        (self.pty_pid, self.pty_fd) = pty.fork()
         return True
 
+    def setup_pty(self):
+        child_args = [os.environ["SHELL"]]
+        (self.pty_pid, self.pty_fd) = pty.fork()
+
+        if self.pty_pid == pty.CHILD:
+            os.execlp(child_args[0], *child_args)
+
     def run_pty(self, channel):
-        x = chan.recv(1024).decode("utf-8")
-        chan.send(x)
+        rds, wrs, ers = select.select([self.pty_fd, channel.fileno()], [], [])
+        data = ""
 
-        if x == "\r":
-            os.write(self.pty_fd, self.input)
-            output = os.read(self.pty_fd, 1024)
-            output = output.stdout.strip("\n")
-            chan.send(output)
-            self.input = ""
-        else:
-            self.input += x
+        if self.pty_fd in rds:
+            data = os.read(self.pty_fd, 1024)
+            channel.send(data)
 
-        return x
+        if channel.fileno() in rds:
+            data = channel.recv(1024)
+
+            while len(data) > 0:
+                n = os.write(self.pty_fd, data)
+                data = data[n:]
+
+        return data
 
 
     def check_channel_forward_agent_request(self, channel):
@@ -140,6 +148,7 @@ while run:
                 print("*** Client did not ask for a shell! ***")
             
             command = ""
+            server.setup_pty()
 
             while command != QUIT_CMD:
                 command = server.run_pty(chan)
