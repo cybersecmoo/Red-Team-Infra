@@ -2,17 +2,25 @@ import socket
 import sys
 import paramiko
 import threading
+import traceback
+import subprocess
+import pty
+import os
+import select
+
+QUIT_CMD = "quit"
 
 class Server(paramiko.ServerInterface):
     def __init__(self):
         self.event = threading.Event()
+        self.input = ""
 
-    def check_channel_request(self, kind, chanid):
+    def check_channel_request(self, kind, chanid): 
         if kind == "session":
             return paramiko.OPEN_SUCCEEDED
-        
+
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
-    
+
     def check_auth_password(self, username, password):
         if (username == "user") and (password == "foo"):
             return paramiko.AUTH_SUCCESSFUL
@@ -22,7 +30,7 @@ class Server(paramiko.ServerInterface):
     def check_auth_publickey(self, username, key):
         key_for_user = paramiko.RSAKey(filename="{0}_key".format(username))
         
-        if (username == "user") and (key == key_for_user):
+        if (key == key_for_user):
             return paramiko.AUTH_SUCCESSFUL
         
         return paramiko.AUTH_FAILED
@@ -45,6 +53,36 @@ class Server(paramiko.ServerInterface):
     
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
         return True
+
+    def setup_pty(self):
+        child_args = [os.environ["SHELL"]]
+        (self.pty_pid, self.pty_fd) = pty.fork()
+
+        if self.pty_pid == pty.CHILD:
+            os.execlp(child_args[0], *child_args)
+            os._exit(-1)
+
+    def run_pty(self, channel):
+        rds, wrs, ers = select.select([self.pty_fd, channel.fileno()], [], [])
+        data = ""
+
+        try:
+            if self.pty_fd in rds:
+                data = os.read(self.pty_fd, 1024)
+                channel.send(data)
+
+            if channel.fileno() in rds:
+                data = channel.recv(1024)
+
+                while len(data) > 0:
+                    n = os.write(self.pty_fd, data)
+                    data = data[n:]
+        
+        # This happens when we `exit` the shell
+        except OSError as e:
+            data = QUIT_CMD
+
+        return data
 
 def setup_sock():
     try:
@@ -91,17 +129,27 @@ while run:
         if chan is None:
             print("*** No Channel ***")
 
-        print("Authenticated!")
+        else:
+            print("Authenticated!")
 
-        server.event.wait(30)
+            server.event.wait(10)
 
-        if not server.event.is_set():
-            print("*** Client did not ask for a shell! ***")
-        
-        chan.send("HI\r\n")
-        chan.close()
+            if not server.event.is_set():
+                print("*** Client did not ask for a shell! ***")
+            
+            command = ""
+            server.setup_pty()
+
+            while command != QUIT_CMD:
+                command = server.run_pty(chan)
+
+            chan.close()
     
         trans.close()
-    
-    except paramiko.SSHException:
+        
+    except KeyboardInterrupt as inter:
+        print("Closing...")
+
+    except paramiko.SSHException as e:
         print("*** SSH negotiation failure ***")
+        traceback.print_exc()
