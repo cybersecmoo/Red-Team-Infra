@@ -60,39 +60,29 @@ class Server(paramiko.ServerInterface):
 
         if self.pty_pid == pty.CHILD:
             os.execlp(child_args[0], *child_args)
+            os._exit(-1)
 
     def run_pty(self, channel):
         rds, wrs, ers = select.select([self.pty_fd, channel.fileno()], [], [])
         data = ""
 
-        if self.pty_fd in rds:
-            data = os.read(self.pty_fd, 1024)
-            channel.send(data)
+        try:
+            if self.pty_fd in rds:
+                data = os.read(self.pty_fd, 1024)
+                channel.send(data)
 
-        if channel.fileno() in rds:
-            data = channel.recv(1024)
+            if channel.fileno() in rds:
+                data = channel.recv(1024)
 
-            while len(data) > 0:
-                n = os.write(self.pty_fd, data)
-                data = data[n:]
+                while len(data) > 0:
+                    n = os.write(self.pty_fd, data)
+                    data = data[n:]
+        
+        # This happens when we `exit` the shell
+        except OSError as e:
+            data = QUIT_CMD
 
         return data
-
-
-    def check_channel_forward_agent_request(self, channel):
-        return True
-
-    def check_channel_direct_tcpip_request(self, channelID, origin, dest):
-        """ TODO More robust checking; the final system will set up a list of requested reverse tunnels, and check if this matches any of the ones we wanted
-        """
-        print("Forwarding request received")
-        response = paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
-
-        if origin[0] == "localhost" or origin[0] == "127.0.0.1":
-            print("TCP/IP Forwarding request accepted")
-            response = paramiko.OPEN_SUCCEEDED
-
-        return response
 
 def setup_sock():
     try:
@@ -156,6 +146,7 @@ while run:
             chan.close()
     
         trans.close()
+        
     except KeyboardInterrupt as inter:
         print("Closing...")
 
