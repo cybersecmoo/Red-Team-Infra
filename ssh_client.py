@@ -38,6 +38,9 @@ class ClientThread(threading.Thread):
                 forwardFromPort = self.commands.get(True, 0.05)
                 toHostPort = ("localhost", 2222)
                 self._establish_reverse_tunnel(toHostPort, forwardFromPort, self.client.get_transport())
+            
+            elif command == "SFTP":
+                self._sftp_file(self.client.get_transport())
 
     def _establish_reverse_tunnel(self, toHostPort, fromPort, transport):
         print("Establishing reverse tunnel from {0} to {1}:{2}".format(fromPort, toHostPort[0], toHostPort[1]))
@@ -99,3 +102,26 @@ class ClientThread(threading.Thread):
         except Exception as e:
             print("Failed to establish tunnel!")
             traceback.print_exc()
+
+    def _sftp_file(self, transport):
+        sftp_setup_complete = False
+        remote = None
+        fileToCopy = None
+        dest = None
+
+        while not sftp_setup_complete:
+            if not self.commands.empty():
+                if remote is not None and fileToCopy is None:
+                    fileToCopy = self.commands.get(True, 0.05)
+                elif remote is not None and fileToCopy is not None:
+                    dest = self.commands.get(True, 0.05)
+                    sftp_setup_complete = True  # Got everything we need to do the transfer
+                else:
+                    remote = self.commands.get(True, 0.05)
+        
+        sftp = paramiko.SFTPClient.from_transport(transport)
+        sftp.put(fileToCopy, dest)
+        sftp.close()
+                
+            
+
