@@ -4,9 +4,8 @@ import threading
 import socket
 import subprocess
 import select
-from queue import Queue
-
-closeTunnel = False
+import traceback
+import queue
 
 
 class ClientThread(threading.Thread):
@@ -21,6 +20,7 @@ class ClientThread(threading.Thread):
         self.PASSWORD = "somePa55word"
 
         self.stop_request = threading.Event()
+        self.closeTunnel = False
 
         self.client = paramiko.SSHClient()
         self.client.load_system_host_keys()
@@ -36,19 +36,32 @@ class ClientThread(threading.Thread):
 
             if command == "OPEN_TUNNEL":
                 forwardFromPort = self.commands.get(True, 0.05)
-                self._tunnel_handler(chan, self.REMOTE_HOST, self.REMOTE_PORT,
-                                self.client.get_transport(), forwardFromPort)
+                toHostPort = ("localhost", 2222)
+                self._establish_reverse_tunnel(toHostPort, forwardFromPort, self.client.get_transport())
 
-    def _tunnel_handler(self, channel, host, port, transport, forwardFromPort):
+    def _establish_reverse_tunnel(self, toHostPort, fromPort, transport):
+        print("Establishing reverse tunnel from {0} to {1}:{2}".format(fromPort, toHostPort[0], toHostPort[1]))
+        transport.request_port_forward("", fromPort)
+
+        while self.closeTunnel is not True:
+            print("Trying to create a channel")
+            channel = transport.accept()
+
+            if channel is None:
+                print("No Channel")
+            
+            else:
+                self._tunnel_handler(channel, toHostPort[0], toHostPort[1], fromPort)
+
+    def _tunnel_handler(self, channel, host, port, forwardFromPort):
+        print("handling tunnel")
         sock = socket.socket()
-        closeTunnel = False
-        transport.request_port_forward("", forwardFromPort)
 
         try:
             sock.connect((host, port))
-            print("Connected!")
+            print("Tunnel Connected!")
 
-            while closeTunnel is not True:
+            while self.closeTunnel is not True:
 
                 r, w, x = select.select([sock, channel], [], [])
 
@@ -68,7 +81,8 @@ class ClientThread(threading.Thread):
 
                     sock.send(data)
 
-                closeTunnel = (self.commands.get(True, 0.05) == "CLOSE_TUNNEL")
+                if self.commands.empty() is not True:
+                    self.closeTunnel = (self.commands.get(True, 0.05) == "CLOSE_TUNNEL")
 
             channel.close()
             sock.close()
@@ -84,3 +98,4 @@ class ClientThread(threading.Thread):
 
         except Exception as e:
             print("Failed to establish tunnel!")
+            traceback.print_exc()

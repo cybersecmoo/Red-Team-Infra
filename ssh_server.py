@@ -22,7 +22,8 @@ class Server(paramiko.ServerInterface):
         return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
 
     def check_auth_password(self, username, password):
-        if (username == "user") and (password == "foo"):
+        print("Authenticating via password")
+        if (username == self.username) and (password == self.password):
             return paramiko.AUTH_SUCCESSFUL
 
         return paramiko.AUTH_FAILED
@@ -73,13 +74,13 @@ class ServerThread(threading.Thread):
                 sock.listen(100)
                 print("Listening...")
                 client, addr = sock.accept()
-                print("Connected!")
+                print("Server Connected!")
 
             except Exception as e:
                 print("*** Failed to connect ***")
             
             try:
-                chan, trans = self._establish_channel()
+                chan, trans = self._establish_channel(client)
 
                 if chan is None:
                     print("*** No Channel ***")
@@ -93,10 +94,10 @@ class ServerThread(threading.Thread):
                         print("*** Client did not ask for a shell! ***")
                     
                     command = ""
-                    self.setup_pty()
+                    self._setup_pty()
 
-                    while command != QUIT_CMD:
-                        command = self.run_pty(chan)
+                    while command != self.QUIT_CMD:
+                        command = self._run_pty(chan)
 
                     chan.close()
             
@@ -126,9 +127,10 @@ class ServerThread(threading.Thread):
 
         except Exception as e:
             print("*** Failed to open socket ***")
+            traceback.print_exc()
             self.stop_request.set()
 
-    def _establish_channel(self):
+    def _establish_channel(self, client):
         trans = paramiko.Transport(client)
         
         host_key = paramiko.RSAKey(filename="host_key")
@@ -166,7 +168,7 @@ class ServerThread(threading.Thread):
         
         # This happens when we `exit` the shell
         except OSError as e:
-            data = QUIT_CMD
+            data = self.QUIT_CMD
 
         return data
     
