@@ -26,6 +26,8 @@ class ClientThread(threading.Thread):
         self.client.load_system_host_keys()
         self.client.set_missing_host_key_policy(paramiko.AutoAddPolicy)
 
+    # TODO: Restructure this based  on the new way of handling commands
+    # TODO: Calculate a unique ID for each tunnel based on the from/to details. This will allow us to selectively close individual tunnels
     def run(self):
         self.client.connect(self.REMOTE_HOST, self.REMOTE_PORT,
                             username=self.USERNAME, password=self.PASSWORD)
@@ -37,13 +39,15 @@ class ClientThread(threading.Thread):
             if command == "OPEN_TUNNEL":
                 forwardFromPort = self.commands.get(True, 0.05)
                 toHostPort = ("localhost", 2222)
-                self._establish_reverse_tunnel(toHostPort, forwardFromPort, self.client.get_transport())
-            
+                self._establish_reverse_tunnel(
+                    toHostPort, forwardFromPort, self.client.get_transport())
+
             elif command == "SFTP":
                 self._sftp_file(self.client.get_transport())
 
     def _establish_reverse_tunnel(self, toHostPort, fromPort, transport):
-        print("Establishing reverse tunnel from {0} to {1}:{2}".format(fromPort, toHostPort[0], toHostPort[1]))
+        print("Establishing reverse tunnel from {0} to {1}:{2}".format(
+            fromPort, toHostPort[0], toHostPort[1]))
         transport.request_port_forward("", fromPort)
 
         while self.closeTunnel is not True:
@@ -52,9 +56,10 @@ class ClientThread(threading.Thread):
 
             if channel is None:
                 print("No Channel")
-            
+
             else:
-                self._tunnel_handler(channel, toHostPort[0], toHostPort[1], fromPort)
+                self._tunnel_handler(
+                    channel, toHostPort[0], toHostPort[1], fromPort)
 
     def _tunnel_handler(self, channel, host, port, forwardFromPort):
         print("handling tunnel")
@@ -85,7 +90,8 @@ class ClientThread(threading.Thread):
                     sock.send(data)
 
                 if self.commands.empty() is not True:
-                    self.closeTunnel = (self.commands.get(True, 0.05) == "CLOSE_TUNNEL")
+                    self.closeTunnel = (self.commands.get(
+                        True, 0.05) == "CLOSE_TUNNEL")
 
             channel.close()
             sock.close()
@@ -118,10 +124,7 @@ class ClientThread(threading.Thread):
                     sftp_setup_complete = True  # Got everything we need to do the transfer
                 else:
                     remote = self.commands.get(True, 0.05)
-        
+
         sftp = paramiko.SFTPClient.from_transport(transport)
         sftp.put(fileToCopy, dest)
         sftp.close()
-                
-            
-
